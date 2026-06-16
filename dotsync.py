@@ -102,7 +102,6 @@ def git_sync():
             err = commit.stderr.strip() if commit.stderr else ""
             log(f"Commit: {err}")
 
-            # If truly nothing to do, reset so we don't loop forever
             status = subprocess.run(
                 ["git", "status", "--porcelain"],
                 cwd="/home/aman/dotfiles/",
