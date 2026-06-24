@@ -90,6 +90,9 @@ SKIP_DIR_NAMES = {
     "venv",
 }
 RECENT_LIMIT = 12
+IMAGE_PLACEHOLDER_PREFIX = "[[EPUB_IMAGE|"
+IMAGE_PLACEHOLDER_SUFFIX = "]]"
+READING_WORDS_PER_MINUTE = 225
 PAIR_BODY = 1
 PAIR_TITLE = 2
 PAIR_DIVIDER = 3
@@ -105,6 +108,7 @@ class Chapter:
     title: str
     source: str
     raw_text: str
+    word_count: int
 
 
 @dataclass
@@ -112,13 +116,27 @@ class WrappedChapter:
     title: str
     source: str
     lines: List[str]
+    image_targets: Dict[int, Path]
+
+
+@dataclass
+class DashboardEntry:
+    path: Path
+    title: str
+    last_opened: int
+    chapter_idx: int
+    chapter_title: str
+    progress_percent: Optional[int]
+    time_left_minutes: Optional[int]
+    total_minutes: Optional[int]
 
 
 class TextExtractor(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, image_handler=None) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: List[str] = []
         self.skip_depth = 0
+        self.image_handler = image_handler
 
     def handle_starttag(self, tag: str, attrs) -> None:
         tag = tag.lower()
@@ -127,7 +145,11 @@ class TextExtractor(HTMLParser):
             return
         if self.skip_depth:
             return
-        if tag == "li":
+        if tag == "img" and self.image_handler:
+            image_placeholder = self.image_handler(dict(attrs))
+            if image_placeholder:
+                self.parts.append(f"\n{image_placeholder}\n")
+        elif tag == "li":
             self.parts.append("\n- ")
         elif tag in BLOCK_TAGS:
             self.parts.append("\n")
@@ -237,13 +259,20 @@ class EpubBook:
                     chapter_html = zf.read(doc_path).decode("utf-8", errors="ignore")
                 except KeyError:
                     continue
-                text = self._html_to_text(chapter_html)
+                text = self._html_to_text(chapter_html, doc_path, zf)
                 if not text:
                     continue
                 title = toc_titles.get(self._normalize_href(doc_path))
                 if not title:
                     title = self._extract_heading(chapter_html) or Path(href).stem.replace("_", " ")
-                loaded.append(Chapter(title=title.strip(), source=doc_path, raw_text=text))
+                loaded.append(
+                    Chapter(
+                        title=title.strip(),
+                        source=doc_path,
+                        raw_text=text,
+                        word_count=self._count_words(text),
+                    )
+                )
 
             if not loaded:
                 raise ValueError("No readable chapters found in EPUB")
@@ -409,10 +438,58 @@ class EpubBook:
         inner = re.sub(r"<[^>]+>", " ", match.group(1))
         return re.sub(r"\s+", " ", html.unescape(inner)).strip()
 
-    def _html_to_text(self, chapter_html: str) -> str:
-        parser = TextExtractor()
+    def _html_to_text(self, chapter_html: str, doc_path: str, zf: zipfile.ZipFile) -> str:
+        parser = TextExtractor(
+            image_handler=lambda attrs: self._build_image_placeholder(doc_path, attrs, zf)
+        )
         parser.feed(chapter_html)
         return parser.text()
+
+    def _build_image_placeholder(
+        self, doc_path: str, attrs: Dict[str, str], zf: zipfile.ZipFile
+    ) -> str:
+        src = attrs.get("src", "").strip()
+        if not src:
+            return ""
+        image_path = self._resolve_path(doc_path, src)
+        extracted_path = self._extract_asset(zf, image_path)
+        if not extracted_path:
+            return ""
+        alt = re.sub(r"\s+", " ", attrs.get("alt", "").strip())
+        return (
+            f"{IMAGE_PLACEHOLDER_PREFIX}"
+            f"{extracted_path.as_posix()}|{alt}"
+            f"{IMAGE_PLACEHOLDER_SUFFIX}"
+        )
+
+    def _extract_asset(self, zf: zipfile.ZipFile, asset_path: str) -> Optional[Path]:
+        try:
+            payload = zf.read(asset_path)
+        except KeyError:
+            return None
+        temp_root = self._ensure_temp_root()
+        relative = Path(asset_path.lstrip("./"))
+        target = temp_root / "assets" / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_bytes(payload)
+        except OSError:
+            return None
+        return target
+
+    def _ensure_temp_root(self) -> Path:
+        if self._temp_root is None:
+            self._temp_root = Path(tempfile.mkdtemp(prefix="epub_reader_"))
+            atexit.register(shutil.rmtree, self._temp_root, ignore_errors=True)
+        return self._temp_root
+
+    def _count_words(self, text: str) -> int:
+        clean_text = re.sub(
+            rf"{re.escape(IMAGE_PLACEHOLDER_PREFIX)}.*?{re.escape(IMAGE_PLACEHOLDER_SUFFIX)}",
+            " ",
+            text,
+        )
+        return len(re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", clean_text))
 
     def _parse_nav_doc(self, chapter_html: str, nav_path: str) -> Dict[str, str]:
         parser = NavDocParser()
@@ -446,13 +523,28 @@ class StateStore:
             return {}
         return data if isinstance(data, dict) else {}
 
-    def save_position(self, book_path: Path, title: str, chapter_idx: int, line_idx: int) -> None:
+    def save_position(
+        self,
+        book_path: Path,
+        title: str,
+        chapter_idx: int,
+        line_idx: int,
+        *,
+        chapter_title: str = "",
+        progress_percent: Optional[int] = None,
+        time_left_minutes: Optional[int] = None,
+        total_minutes: Optional[int] = None,
+    ) -> None:
         state = self.load()
         key = str(book_path)
         state[key] = {
             "chapter_idx": chapter_idx,
             "line_idx": line_idx,
             "title": title,
+            "chapter_title": chapter_title,
+            "progress_percent": progress_percent,
+            "time_left_minutes": time_left_minutes,
+            "total_minutes": total_minutes,
             "last_opened": int(time.time()),
         }
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -490,6 +582,7 @@ class ReaderApp:
         self.wrapped: List[WrappedChapter] = []
         self.chapter_totals: List[int] = []
         self.total_lines = 0
+        self.total_words = max(1, sum(chapter.word_count for chapter in self.book.chapters))
         self.help_visible = False
         self.lookup_cache: Dict[str, Dict[str, str]] = {}
         self.colors_enabled = False
@@ -497,9 +590,16 @@ class ReaderApp:
     def run(self) -> None:
         curses.curs_set(0)
         self.stdscr.keypad(True)
+        mouse_flags = curses.ALL_MOUSE_EVENTS
+        if hasattr(curses, "REPORT_MOUSE_POSITION"):
+            mouse_flags |= curses.REPORT_MOUSE_POSITION
+        try:
+            curses.mousemask(mouse_flags)
+        except curses.error:
+            pass
         self.init_theme()
         self.rewrap()
-        self.state.save_position(self.book.original_path, self.book.title, self.chapter_idx, self.line_idx)
+        self.save_position()
 
         while True:
             self.render()
@@ -509,7 +609,7 @@ class ReaderApp:
                 continue
             if not self.handle_key(key):
                 break
-            self.state.save_position(self.book.original_path, self.book.title, self.chapter_idx, self.line_idx)
+            self.save_position()
 
     def init_theme(self) -> None:
         self.colors_enabled = False
@@ -549,8 +649,8 @@ class ReaderApp:
         wrapped: List[WrappedChapter] = []
         totals: List[int] = []
         for chapter in self.book.chapters:
-            wrapped_lines = self._wrap_text(chapter.raw_text, self.wrap_width)
-            wrapped.append(WrappedChapter(chapter.title, chapter.source, wrapped_lines))
+            wrapped_lines, image_targets = self._wrap_text(chapter.raw_text, self.wrap_width)
+            wrapped.append(WrappedChapter(chapter.title, chapter.source, wrapped_lines, image_targets))
             totals.append(len(wrapped_lines))
         self.wrapped = wrapped
         self.chapter_totals = totals
@@ -561,9 +661,19 @@ class ReaderApp:
             self.chapter_idx = max(0, min(self.chapter_idx, len(self.chapter_totals) - 1))
             self.line_idx = self._clamp_line(self.chapter_idx, self.line_idx)
 
-    def _wrap_text(self, text: str, width: int) -> List[str]:
+    def _wrap_text(self, text: str, width: int) -> Tuple[List[str], Dict[int, Path]]:
         lines: List[str] = []
+        image_targets: Dict[int, Path] = {}
         for paragraph in text.split("\n"):
+            image_meta = self._parse_image_placeholder(paragraph.strip())
+            if image_meta:
+                image_lines = self._render_image_block(image_meta[0], image_meta[1], width)
+                start_idx = len(lines)
+                lines.extend(image_lines)
+                for offset in range(len(image_lines)):
+                    image_targets[start_idx + offset] = image_meta[0]
+                lines.append("")
+                continue
             if not paragraph.strip():
                 lines.append("")
                 continue
@@ -578,7 +688,33 @@ class ReaderApp:
             lines.extend(wrapped or [""])
         if not lines:
             lines = [""]
-        return lines
+        return lines, image_targets
+
+    def _parse_image_placeholder(self, paragraph: str) -> Optional[Tuple[Path, str]]:
+        if not (
+            paragraph.startswith(IMAGE_PLACEHOLDER_PREFIX)
+            and paragraph.endswith(IMAGE_PLACEHOLDER_SUFFIX)
+        ):
+            return None
+        payload = paragraph[len(IMAGE_PLACEHOLDER_PREFIX) : -len(IMAGE_PLACEHOLDER_SUFFIX)]
+        image_path, _, alt = payload.partition("|")
+        if not image_path:
+            return None
+        return Path(image_path), alt.strip()
+
+    def _render_image_block(self, image_path: Path, alt: str, width: int) -> List[str]:
+        label = alt or image_path.stem.replace("_", " ").replace("-", " ").strip()
+        primary = f"[Image] {label}" if label else "[Image]"
+        secondary = "click to open in default viewer"
+        max_width = max(16, width)
+        rendered: List[str] = []
+        rendered.extend(
+            textwrap.wrap(primary, width=max_width, break_long_words=False, break_on_hyphens=False) or [primary]
+        )
+        rendered.extend(
+            textwrap.wrap(secondary, width=max_width, break_long_words=False, break_on_hyphens=False)
+        )
+        return rendered
 
     def _clamp_line(self, chapter_idx: int, line_idx: int) -> int:
         max_start = max(0, self.chapter_totals[chapter_idx] - 1)
@@ -598,6 +734,36 @@ class ReaderApp:
         base = sum(self.chapter_totals[: self.chapter_idx])
         return min(base + self.line_idx, self.total_lines - 1)
 
+    def total_words_before_current_chapter(self) -> int:
+        return sum(chapter.word_count for chapter in self.book.chapters[: self.chapter_idx])
+
+    def chapter_word_progress(self) -> int:
+        chapter_total_lines = max(1, self.chapter_totals[self.chapter_idx])
+        line_progress = min(self.line_idx, chapter_total_lines)
+        ratio = line_progress / chapter_total_lines
+        return min(
+            self.book.chapters[self.chapter_idx].word_count,
+            int(self.book.chapters[self.chapter_idx].word_count * ratio),
+        )
+
+    def words_read(self) -> int:
+        return min(
+            self.total_words,
+            self.total_words_before_current_chapter() + self.chapter_word_progress(),
+        )
+
+    def format_reading_time(self, words: int) -> str:
+        minutes = self.reading_minutes(words)
+        hours, mins = divmod(minutes, 60)
+        if hours and mins:
+            return f"{hours}h {mins:02d}m"
+        if hours:
+            return f"{hours}h"
+        return f"{mins}m"
+
+    def reading_minutes(self, words: int) -> int:
+        return max(1, round(words / READING_WORDS_PER_MINUTE)) if words > 0 else 0
+
     def restore_global_position(self, global_line: int) -> None:
         global_line = max(0, global_line)
         remaining = global_line
@@ -610,12 +776,30 @@ class ReaderApp:
         self.chapter_idx = len(self.chapter_totals) - 1
         self.line_idx = max(0, self.chapter_totals[-1] - 1)
 
+    def save_position(self) -> None:
+        progress_percent = int(((self.global_line_position() + 1) / self.total_lines) * 100)
+        words_left = max(0, self.total_words - self.words_read())
+        chapter_title = self.wrapped[self.chapter_idx].title if self.wrapped else ""
+        self.state.save_position(
+            self.book.original_path,
+            self.book.title,
+            self.chapter_idx,
+            self.line_idx,
+            chapter_title=chapter_title,
+            progress_percent=progress_percent,
+            time_left_minutes=self.reading_minutes(words_left),
+            total_minutes=self.reading_minutes(self.total_words),
+        )
+
     def handle_key(self, key: int) -> bool:
         if self.help_visible and key not in (ord("?"), ord("h"), 27):
             self.help_visible = False
 
         if key in (ord("q"), 27):
             return False
+        if key == curses.KEY_MOUSE:
+            self.handle_mouse()
+            return True
         if key in (ord("?"), ord("h")):
             self.help_visible = not self.help_visible
             return True
@@ -648,6 +832,64 @@ class ReaderApp:
         elif key == ord("$"):
             self.line_idx = max(0, self.chapter_totals[self.chapter_idx] - self.page_capacity())
         return True
+
+    def handle_mouse(self) -> None:
+        try:
+            _, mouse_x, mouse_y, _, button_state = curses.getmouse()
+        except curses.error:
+            return
+        if not (
+            button_state & curses.BUTTON1_CLICKED
+            or button_state & curses.BUTTON1_RELEASED
+            or button_state & curses.BUTTON1_DOUBLE_CLICKED
+        ):
+            return
+        image_path = self.image_at_screen_position(mouse_y, mouse_x)
+        if image_path is not None:
+            self.open_image(image_path)
+
+    def image_at_screen_position(self, mouse_y: int, mouse_x: int) -> Optional[Path]:
+        if self.help_visible or not self.wrapped:
+            return None
+        height, width = self.stdscr.getmaxyx()
+        chapter = self.wrapped[self.chapter_idx]
+        if mouse_y < 1 or mouse_y >= height - 1:
+            return None
+
+        if width < 50:
+            if mouse_x < 1 or mouse_x >= width - 1:
+                return None
+            line_idx = self.line_idx + (mouse_y - 1)
+            return chapter.image_targets.get(line_idx)
+
+        divider_x = width // 2
+        left_x = 1
+        right_x = divider_x + 3
+        left_width = max(1, divider_x - left_x - 2)
+        right_width = max(1, width - right_x - 1)
+        row_offset = mouse_y - 1
+        if row_offset < 0 or row_offset >= self.view_height:
+            return None
+        if left_x <= mouse_x < left_x + left_width:
+            return chapter.image_targets.get(self.line_idx + row_offset)
+        if right_x <= mouse_x < right_x + right_width:
+            return chapter.image_targets.get(self.line_idx + self.view_height + row_offset)
+        return None
+
+    def open_image(self, image_path: Path) -> None:
+        opener = shutil.which("xdg-open")
+        if not opener:
+            self.show_overlay(["Image opener not found: xdg-open", "", str(image_path), "", "Press any key"])
+            return
+        try:
+            subprocess.Popen(
+                [opener, str(image_path)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            self.show_overlay(["Failed to open image", "", str(exc), "", "Press any key"])
 
     def move_lines(self, delta: int) -> None:
         current_total = self.chapter_totals[self.chapter_idx]
@@ -751,8 +993,13 @@ class ReaderApp:
 
         if width < 50:
             bottom = min(len(chapter.lines), top + self.view_height)
-            for row, line in enumerate(chapter.lines[top:bottom], start=1):
-                self.stdscr.addnstr(row, 1, line, max(1, width - 2), self.theme(PAIR_BODY))
+            for row, line_idx in enumerate(range(top, bottom), start=1):
+                attr = (
+                    self.theme(PAIR_ACCENT, curses.A_BOLD)
+                    if line_idx in chapter.image_targets
+                    else self.theme(PAIR_BODY)
+                )
+                self.stdscr.addnstr(row, 1, chapter.lines[line_idx], max(1, width - 2), attr)
         else:
             divider_x = width // 2
             left_x = 1
@@ -770,9 +1017,19 @@ class ReaderApp:
                 left_idx = left_start + offset
                 right_idx = right_start + offset
                 if left_idx < len(chapter.lines):
-                    self.stdscr.addnstr(row, left_x, chapter.lines[left_idx], left_width, self.theme(PAIR_BODY))
+                    attr = (
+                        self.theme(PAIR_ACCENT, curses.A_BOLD)
+                        if left_idx in chapter.image_targets
+                        else self.theme(PAIR_BODY)
+                    )
+                    self.stdscr.addnstr(row, left_x, chapter.lines[left_idx], left_width, attr)
                 if right_idx < len(chapter.lines):
-                    self.stdscr.addnstr(row, right_x, chapter.lines[right_idx], right_width, self.theme(PAIR_BODY))
+                    attr = (
+                        self.theme(PAIR_ACCENT, curses.A_BOLD)
+                        if right_idx in chapter.image_targets
+                        else self.theme(PAIR_BODY)
+                    )
+                    self.stdscr.addnstr(row, right_x, chapter.lines[right_idx], right_width, attr)
 
         footer = self.build_footer(width)
         self.stdscr.addnstr(height - 1, 0, footer, width - 1, self.theme(PAIR_FOOTER, curses.A_REVERSE))
@@ -788,13 +1045,20 @@ class ReaderApp:
         current = min(self.line_idx + 1, chapter_total)
         overall = self.global_line_position() + 1
         percent = int((overall / self.total_lines) * 100)
-        remaining = max(0, self.total_lines - overall)
-        left = f"{percent:>3}%  {overall}/{self.total_lines} lines  {remaining} left"
+        words_left = max(0, self.total_words - self.words_read())
+        total_time = self.format_reading_time(self.total_words)
+        left = (
+            f"{percent:>3}%  {overall}/{self.total_lines} lines  "
+            f"{self.format_reading_time(words_left)} left of {total_time}"
+        )
         right = f"{self.chapter_idx + 1}/{len(self.wrapped)}  2-col  tab toc  j/k scroll  space/b page  ? help  q quit"
         if len(left) + len(right) + 3 <= width:
             footer = f"{left}   {right}"
         else:
-            footer = f"{chapter.title}  {current}/{chapter_total}  {percent}%"
+            footer = (
+                f"{chapter.title}  {current}/{chapter_total}  "
+                f"{percent}%  {self.format_reading_time(words_left)} left"
+            )
         return self._pad(footer, width - 1)
 
     def render_help(self) -> None:
@@ -806,6 +1070,8 @@ class ReaderApp:
             "tab: table of contents",
             "g / G: first / last chapter",
             "0 / $: chapter start / end",
+            "images: click placeholder to open viewer",
+            f"reading pace: about {READING_WORDS_PER_MINUTE} words/minute",
             "/: define a word",
             "? or h: toggle help",
             "q or Esc: quit",
@@ -1042,6 +1308,212 @@ class ReaderApp:
         return ""
 
 
+class DashboardApp:
+    def __init__(self, stdscr, entries: Sequence[DashboardEntry]) -> None:
+        self.stdscr = stdscr
+        self.entries = list(entries)
+        self.selected = 0
+        self.top = 0
+        self.colors_enabled = False
+
+    def run(self) -> Optional[Path]:
+        curses.curs_set(0)
+        self.stdscr.keypad(True)
+        self.init_theme()
+        while True:
+            self.render()
+            key = self.stdscr.getch()
+            if key == curses.KEY_RESIZE:
+                continue
+            if key in (ord("q"), 27):
+                return None
+            if not self.entries:
+                if key in (10, 13, curses.KEY_ENTER):
+                    return None
+                continue
+            if key in (curses.KEY_DOWN, ord("j")):
+                self.selected = min(len(self.entries) - 1, self.selected + 1)
+            elif key in (curses.KEY_UP, ord("k")):
+                self.selected = max(0, self.selected - 1)
+            elif key in (curses.KEY_NPAGE, ord(" ")):
+                self.selected = min(len(self.entries) - 1, self.selected + self.visible_rows())
+            elif key in (curses.KEY_PPAGE, ord("b")):
+                self.selected = max(0, self.selected - self.visible_rows())
+            elif key in (curses.KEY_HOME, ord("g")):
+                self.selected = 0
+            elif key in (curses.KEY_END, ord("G")):
+                self.selected = len(self.entries) - 1
+            elif key in (10, 13, curses.KEY_ENTER, curses.KEY_RIGHT, ord("l")):
+                return self.entries[self.selected].path
+
+    def init_theme(self) -> None:
+        self.colors_enabled = False
+        if not curses.has_colors():
+            return
+        curses.start_color()
+        try:
+            curses.use_default_colors()
+            curses.init_pair(PAIR_BODY, curses.COLOR_WHITE, -1)
+            curses.init_pair(PAIR_TITLE, curses.COLOR_CYAN, -1)
+            curses.init_pair(PAIR_DIVIDER, curses.COLOR_BLUE, -1)
+            curses.init_pair(PAIR_FOOTER, curses.COLOR_BLACK, curses.COLOR_CYAN)
+            curses.init_pair(PAIR_MODAL, curses.COLOR_WHITE, curses.COLOR_BLACK)
+            curses.init_pair(PAIR_SELECTED, curses.COLOR_BLACK, curses.COLOR_CYAN)
+            curses.init_pair(PAIR_HINT, curses.COLOR_YELLOW, -1)
+            curses.init_pair(PAIR_ACCENT, curses.COLOR_GREEN, -1)
+            self.colors_enabled = True
+        except curses.error:
+            self.colors_enabled = False
+
+    def theme(self, pair: int, fallback: int = curses.A_NORMAL) -> int:
+        if not self.colors_enabled:
+            return fallback
+        return curses.color_pair(pair) | fallback
+
+    def visible_rows(self) -> int:
+        height, width = self.stdscr.getmaxyx()
+        return max(3, height - (8 if width >= 90 else 10))
+
+    def render(self) -> None:
+        self.stdscr.erase()
+        height, width = self.stdscr.getmaxyx()
+        self.stdscr.addnstr(
+            0,
+            0,
+            self._pad("EPUB Dashboard", width - 1),
+            width - 1,
+            self.theme(PAIR_TITLE, curses.A_BOLD),
+        )
+
+        if self.entries:
+            subtitle = (
+                f"{len(self.entries)} tracked books  |  enter open  j/k move  space/b page  q quit"
+            )
+        else:
+            subtitle = "No tracked books yet  |  open one with: epub <filename>  |  q quit"
+        self.stdscr.addnstr(
+            1,
+            0,
+            self._pad(subtitle, width - 1),
+            width - 1,
+            self.theme(PAIR_HINT, curses.A_DIM),
+        )
+
+        if not self.entries:
+            message = "No books in recent history."
+            self.stdscr.addnstr(
+                max(3, height // 2),
+                max(0, (width - len(message)) // 2),
+                message,
+                max(1, width - 2),
+                self.theme(PAIR_BODY),
+            )
+            footer = "Use epub <book name> to open a book directly."
+            self.stdscr.addnstr(height - 1, 0, self._pad(footer, width - 1), width - 1, self.theme(PAIR_FOOTER, curses.A_REVERSE))
+            self.stdscr.refresh()
+            return
+
+        if width >= 90:
+            self.render_two_pane(height, width)
+        else:
+            self.render_single_pane(height, width)
+        self.stdscr.refresh()
+
+    def render_two_pane(self, height: int, width: int) -> None:
+        divider_x = min(max(34, width // 2), width - 28)
+        list_width = divider_x - 2
+        detail_x = divider_x + 2
+        detail_width = max(18, width - detail_x - 1)
+        rows = max(3, height - 4)
+        self._sync_top(rows)
+
+        for row in range(2, height - 1):
+            self.stdscr.addch(row, divider_x, curses.ACS_VLINE, self.theme(PAIR_DIVIDER, curses.A_DIM))
+
+        visible = self.entries[self.top : self.top + rows]
+        for offset, entry in enumerate(visible):
+            idx = self.top + offset
+            y = offset + 2
+            prefix = ">" if idx == self.selected else " "
+            title = self._trim(f"{prefix} {entry.title}", list_width - 1)
+            meta = self.entry_meta(entry)
+            row_text = self._trim(f"{title}  |  {meta}", list_width - 1)
+            attr = self.theme(PAIR_SELECTED) if idx == self.selected else self.theme(PAIR_BODY)
+            self.stdscr.addnstr(y, 1, self._pad(row_text, list_width - 1), list_width - 1, attr)
+
+        detail_lines = self.detail_lines(self.entries[self.selected], detail_width - 2)
+        for row, line in enumerate(detail_lines[: max(1, height - 4)], start=2):
+            attr = self.theme(PAIR_TITLE, curses.A_BOLD) if row == 2 else self.theme(PAIR_BODY)
+            self.stdscr.addnstr(row, detail_x, line, detail_width, attr)
+
+        footer = f"{self.selected + 1}/{len(self.entries)} selected"
+        self.stdscr.addnstr(height - 1, 0, self._pad(footer, width - 1), width - 1, self.theme(PAIR_FOOTER, curses.A_REVERSE))
+
+    def render_single_pane(self, height: int, width: int) -> None:
+        rows = max(3, height - 6)
+        self._sync_top(rows)
+        visible = self.entries[self.top : self.top + rows]
+        for offset, entry in enumerate(visible):
+            idx = self.top + offset
+            y = offset + 2
+            attr = self.theme(PAIR_SELECTED) if idx == self.selected else self.theme(PAIR_BODY)
+            row_text = self._trim(f"{entry.title}  |  {self.entry_meta(entry)}", width - 3)
+            self.stdscr.addnstr(y, 1, self._pad(row_text, width - 3), width - 3, attr)
+
+        detail_lines = self.detail_lines(self.entries[self.selected], width - 2)
+        detail_start = max(2, height - 4)
+        for row, line in enumerate(detail_lines[: max(1, height - detail_start - 1)], start=detail_start):
+            attr = self.theme(PAIR_ACCENT, curses.A_BOLD) if row == detail_start else self.theme(PAIR_BODY, curses.A_DIM)
+            self.stdscr.addnstr(row, 1, self._pad(line, width - 2), width - 2, attr)
+
+        footer = f"{self.selected + 1}/{len(self.entries)}  enter open  q quit"
+        self.stdscr.addnstr(height - 1, 0, self._pad(footer, width - 1), width - 1, self.theme(PAIR_FOOTER, curses.A_REVERSE))
+
+    def _sync_top(self, rows: int) -> None:
+        if self.selected < self.top:
+            self.top = self.selected
+        elif self.selected >= self.top + rows:
+            self.top = self.selected - rows + 1
+
+    def entry_meta(self, entry: DashboardEntry) -> str:
+        progress = f"{entry.progress_percent}%" if entry.progress_percent is not None else f"chapter {entry.chapter_idx + 1}"
+        time_part = ""
+        if entry.time_left_minutes is not None and entry.total_minutes is not None:
+            time_part = f"  {self.format_minutes(entry.time_left_minutes)} left"
+        return f"{progress}  {self.format_opened(entry.last_opened)}{time_part}"
+
+    def detail_lines(self, entry: DashboardEntry, width: int) -> List[str]:
+        lines = [
+            self._trim(entry.title, width),
+            self._trim(f"Chapter: {entry.chapter_title or f'#{entry.chapter_idx + 1}'}", width),
+            self._trim(f"Progress: {self.entry_meta(entry)}", width),
+            self._trim(f"Path: {entry.path}", width),
+        ]
+        if entry.total_minutes is not None:
+            lines.append(self._trim(f"Estimated total reading time: {self.format_minutes(entry.total_minutes)}", width))
+        return lines
+
+    def format_opened(self, timestamp: int) -> str:
+        if not timestamp:
+            return "never opened"
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp))
+
+    def format_minutes(self, minutes: int) -> str:
+        hours, mins = divmod(max(0, minutes), 60)
+        if hours and mins:
+            return f"{hours}h {mins:02d}m"
+        if hours:
+            return f"{hours}h"
+        return f"{mins}m"
+
+    def _trim(self, text_value: str, width: int) -> str:
+        return text_value if len(text_value) <= width else text_value[: max(0, width - 3)] + "..."
+
+    def _pad(self, text_value: str, width: int) -> str:
+        trimmed = self._trim(text_value, width)
+        return trimmed + " " * max(0, width - len(trimmed))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read an EPUB file directly in the terminal.")
     parser.add_argument("book", nargs="*", help="Path or partial filename of the book")
@@ -1131,26 +1603,41 @@ def resolve_book(query_parts: Sequence[str], books: Optional[Sequence[Path]] = N
     raise ValueError(f"Multiple books match '{raw_query}': {preview}")
 
 
-def print_recent_books(state: StateStore) -> int:
-    recent = state.recent_books()
-    print("Recent books")
-    print("------------")
-    if not recent:
-        print("No recent books yet.")
-        print("Use: epub <filename>")
-        return 0
+def build_dashboard_entries(state: StateStore) -> List[DashboardEntry]:
+    entries: List[DashboardEntry] = []
+    for path, data in state.recent_books():
+        chapter_idx = int(data.get("chapter_idx", 0))
+        progress_percent = data.get("progress_percent")
+        time_left_minutes = data.get("time_left_minutes")
+        total_minutes = data.get("total_minutes")
+        entries.append(
+            DashboardEntry(
+                path=path,
+                title=str(data.get("title") or path.stem),
+                last_opened=int(data.get("last_opened", 0)),
+                chapter_idx=chapter_idx,
+                chapter_title=str(data.get("chapter_title") or f"Chapter {chapter_idx + 1}"),
+                progress_percent=int(progress_percent) if isinstance(progress_percent, (int, float)) else None,
+                time_left_minutes=int(time_left_minutes) if isinstance(time_left_minutes, (int, float)) else None,
+                total_minutes=int(total_minutes) if isinstance(total_minutes, (int, float)) else None,
+            )
+        )
+    return entries
 
-    for index, (path, data) in enumerate(recent, start=1):
-        title = str(data.get("title") or path.stem)
-        timestamp = int(data.get("last_opened", 0))
-        opened = time.strftime("%Y-%m-%d %H:%M", time.localtime(timestamp)) if timestamp else "unknown"
-        print(f"{index:>2}. {title}")
-        print(f"    {path}")
-        print(f"    last opened: {opened}")
 
-    print("")
-    print("Use: epub <filename>")
-    return 0
+def run_dashboard(state: StateStore) -> Optional[Path]:
+    selected_path: Optional[Path] = None
+    entries = build_dashboard_entries(state)
+
+    def runner(stdscr) -> None:
+        nonlocal selected_path
+        selected_path = DashboardApp(stdscr, entries).run()
+
+    try:
+        curses.wrapper(runner)
+    except KeyboardInterrupt:
+        return None
+    return selected_path
 
 
 def print_completion_candidates(query: str) -> int:
@@ -1170,19 +1657,9 @@ def print_completion_candidates(query: str) -> int:
     return 0
 
 
-def main() -> int:
-    args = parse_args()
-    state = StateStore(STATE_PATH)
-
-    if args.complete is not None:
-        return print_completion_candidates(args.complete)
-
-    if not args.book:
-        return print_recent_books(state)
-
+def open_reader(book_path: Path, state: StateStore) -> int:
     try:
-        books = discover_books()
-        book = EpubBook(resolve_book(args.book, books=books))
+        book = EpubBook(book_path)
     except Exception as exc:
         print(f"Error: {exc}")
         return 1
@@ -1196,6 +1673,28 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     return 0
+
+
+def main() -> int:
+    args = parse_args()
+    state = StateStore(STATE_PATH)
+
+    if args.complete is not None:
+        return print_completion_candidates(args.complete)
+
+    if not args.book:
+        selected_path = run_dashboard(state)
+        if selected_path is None:
+            return 0
+        return open_reader(selected_path, state)
+
+    try:
+        books = discover_books()
+        book_path = resolve_book(args.book, books=books)
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return 1
+    return open_reader(book_path, state)
 
 
 if __name__ == "__main__":
