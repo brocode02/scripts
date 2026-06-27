@@ -1,0 +1,13 @@
+[Unit]
+Description=Downloads Folder Sorter
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/aman/scripts/download_sorter/download_sorter.py
+Restart=on-failure
+RestartSec=5
+User=aman
+
+[Install]
+WantedBy=default.target
