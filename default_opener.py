@@ -1,78 +1,113 @@
+from pathlib import Path
+import itertools
+import configparser
 import subprocess
-import os
 
 
-def available_browser():
-    browser = subprocess.run(
-        r'grep -l "x-scheme-handler/http\|WebBrowser" /usr/share/applications/*.desktop ~/. local/share/applications/*.desktop / 2>/dev/null',
-        capture_output=True,
-        text=True,
-        shell=True,
-    )
-    if not browser.stdout.strip():
-        print("No browser found")
-        return
-    return browser.stdout.splitlines()
+directories = [
+    Path("/usr/share/applications"),
+    Path.home() / ".local/share/applications",
+]
+
+file_generator = itertools.chain(*(folder.rglob("*.desktop") for folder in directories))
+
+Application = []
+
+for desktop_file in file_generator:
+    config = configparser.ConfigParser(interpolation=None)
+
+    try:
+        config.read(desktop_file)
+
+        if "Desktop Entry" not in config:
+            continue
+
+        entry = config["Desktop Entry"]
+        app = {
+            "name": entry.get("Name", "Unknown"),
+            "exec_cmd": entry.get("Exec", ""),
+            "icon": entry.get("Icon", ""),
+            "mime": entry.get("MimeType", ""),
+            "categories": entry.get("Categories", ""),
+            "desktop_id": desktop_file.name,
+        }
+        Application.append(app)
+
+    except Exception:
+        continue
+
+ask_user = input("Enter mime type:\n")
 
 
-def choose_browser(browser):
-    S_no = 0
-
-    browser_list = []
-
-    for line in browser:
-        S_no += 1
-        print(f"{S_no}: {os.path.basename(line)}")
-        browser_list.append(os.path.basename((line)))
-
-    user_answer = int(input("Choose_browser "))
-    return user_answer, browser_list, S_no
+def supported_apps(MimeType):
+    matches = {}
+    for app in Application:
+        mime_list = []
+        for m in app["mime"].split(";"):
+            if m:
+                mime_list.append(m)
+        if MimeType in mime_list:
+            matches[app["name"]] = app["desktop_id"]
+    return matches
 
 
-def set_browser(user_answer, browser_list, S_no):
+matches = supported_apps(ask_user)
 
-    if user_answer in range(1, S_no + 1):
-        confirm = input("are you sure? [y/n]").lower()
+
+def choose_apps(matches) -> tuple[str, str]:
+    options = list(matches.items())
+    for i, (key, _) in enumerate(options, start=1):
+        print(f"{i}: {key}")
+
+    while True:
+        user_answer = input("Choose app ")
+        if not user_answer.isdigit():
+            print("Type a number")
+            continue
+        user_answer = int(user_answer)
+        if user_answer in range(1, len(options) + 1):
+            name, desktop_id = options[user_answer - 1]
+            return name, desktop_id
+        print(f"Type valid number between 1-{len(options)}")
+
+
+name, desktop_id = choose_apps(matches)
+
+
+def set_apps(name, desktop_id):
+    while True:
+        confirm = input("Are you sure [y/n]: ")
+
         if confirm == "y":
             subprocess.run(
                 [
-                    "xdg-settings",
-                    "set",
-                    "default-web-browser",
-                    browser_list[user_answer - 1],
+                    "xdg-mime",
+                    "default",
+                    desktop_id,
+                    ask_user,
                 ]
             )
-
-
-def confirm_browser(user_answer, browser_list):
-    checked_dict = {}
-    user_browser = browser_list[user_answer - 1]
-    https = subprocess.run(
-        ["xdg-mime", "query", "default", "x-scheme-handler/https"],
-        capture_output=True,
-        text=True,
-    )
-    checked_dict["https"] = https.stdout.strip()
-    html = subprocess.run(
-        ["xdg-mime", "query", "default", "text/html"],
-        capture_output=True,
-        text=True,
-    )
-    checked_dict["html"] = html.stdout.strip()
-    http = subprocess.run(
-        ["xdg-mime", "query", "default", "x-scheme-handler/http"],
-        capture_output=True,
-        text=True,
-    )
-    checked_dict["http"] = http.stdout.strip()
-    for key, value in checked_dict.items():
-        if value == user_browser:
-            print(f"your {user_browser} opens {key}")
+            confirm_app(name, desktop_id)
+            break
+        elif confirm == "n":
+            break
         else:
-            print(f"have error changing {key} link")
+            print("type a valid response")
 
 
-browser = available_browser()
-user_answer, browser_list, S_no = choose_browser(browser)
-set_browser(user_answer, browser_list, S_no)
-confirm_browser(user_answer, browser_list)
+def confirm_app(name, desktop_id):
+    result_app = subprocess.run(
+        [
+            "xdg-mime",
+            "query",
+            "default",
+            ask_user,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if desktop_id == result_app.stdout.strip():
+        print(f"App sucessfully changed to {name} ")
+
+
+set_apps(name, desktop_id)
