@@ -2,6 +2,12 @@ from pathlib import Path
 import itertools
 import configparser
 import subprocess
+from categories import MIME_CATEGORIES
+
+
+print(
+    "===========================\n Linux Default App Manager \n ============================\n"
+)
 
 
 directories = [
@@ -36,28 +42,41 @@ for desktop_file in file_generator:
     except Exception:
         continue
 
-ask_user = input("Enter mime type:\n")
+MIME_CATEGORIES = MIME_CATEGORIES
 
 
-def supported_apps(MimeType):
-    matches = {}
+def display(MIME_CATEGORIES):
+    options = []
+    for i, key in enumerate(MIME_CATEGORIES, start=1):
+        print(f"{i}.  {key}")
+        options.append(key)
+    ask_user = int(input("\nChoose: "))
+    return ask_user, options
+
+
+ask_user, options = display(MIME_CATEGORIES)
+
+
+def supported_apps(options, ask_user):
+    matches = []
     for app in Application:
         mime_list = []
         for m in app["mime"].split(";"):
             if m:
                 mime_list.append(m)
-        if MimeType in mime_list:
-            matches[app["name"]] = app["desktop_id"]
+        if any(
+            MimeType in mime_list for MimeType in MIME_CATEGORIES[options[ask_user - 1]]
+        ):
+            matches.append(app)
     return matches
 
 
-matches = supported_apps(ask_user)
+matches = supported_apps(options, ask_user)
 
 
 def choose_apps(matches) -> tuple[str, str]:
-    options = list(matches.items())
-    for i, (key, _) in enumerate(options, start=1):
-        print(f"{i}: {key}")
+    for i, matched_app in enumerate(matches, start=1):
+        print(f"{i}: {matched_app['name']}  {matched_app['desktop_id']}")
 
     while True:
         user_answer = input("Choose app ")
@@ -65,10 +84,12 @@ def choose_apps(matches) -> tuple[str, str]:
             print("Type a number")
             continue
         user_answer = int(user_answer)
-        if user_answer in range(1, len(options) + 1):
-            name, desktop_id = options[user_answer - 1]
+        if user_answer in range(1, len(matches) + 1):
+            selcted_app = matches[user_answer - 1]
+            name = selcted_app["name"]
+            desktop_id = selcted_app["desktop_id"]
             return name, desktop_id
-        print(f"Type valid number between 1-{len(options)}")
+        print(f"Type valid number between 1-{len(matches)}")
 
 
 name, desktop_id = choose_apps(matches)
@@ -79,15 +100,16 @@ def set_apps(name, desktop_id):
         confirm = input("Are you sure [y/n]: ")
 
         if confirm == "y":
-            subprocess.run(
-                [
-                    "xdg-mime",
-                    "default",
-                    desktop_id,
-                    ask_user,
-                ]
-            )
-            confirm_app(name, desktop_id)
+            for app_functions in MIME_CATEGORIES[options[ask_user - 1]]:
+                subprocess.run(
+                    [
+                        "xdg-mime",
+                        "default",
+                        desktop_id,
+                        app_functions,
+                    ]
+                )
+            confirm_app(name, desktop_id, options)
             break
         elif confirm == "n":
             break
@@ -95,19 +117,24 @@ def set_apps(name, desktop_id):
             print("type a valid response")
 
 
-def confirm_app(name, desktop_id):
-    result_app = subprocess.run(
-        [
-            "xdg-mime",
-            "query",
-            "default",
-            ask_user,
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if desktop_id == result_app.stdout.strip():
+def confirm_app(name, desktop_id, options):
+    results = []
+    for app_functions in MIME_CATEGORIES[options[ask_user - 1]]:
+        result_app = subprocess.run(
+            [
+                "xdg-mime",
+                "query",
+                "default",
+                app_functions,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        results.append(result_app.stdout.strip() == desktop_id)
+    if all(results):
         print(f"App sucessfully changed to {name} ")
+    else:
+        print(f"Some mime types were not changed to {name}")
 
 
 set_apps(name, desktop_id)
