@@ -5,7 +5,7 @@ def supported_apps(applications, selected_category):
 
     matches = []
     for app in applications:
-        if any(MimeType in app["mime"] for MimeType in selected_category):
+        if any(MimeType in app.mime for MimeType in selected_category):
             matches.append(app)
     return matches
 
@@ -46,8 +46,8 @@ def get_current_default(applications, selected_category):
     current_desktop = result.stdout.strip()
 
     for app in applications:
-        if app["desktop_id"] == current_desktop:
-            return app["name"]
+        if app.desktop_id == current_desktop:
+            return app.name
 
     return current_desktop
 

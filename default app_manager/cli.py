@@ -18,10 +18,10 @@ def choose_apps(matches, current_default, app_type) -> tuple[str, str]:
         raise ValueError("No apps found for the selected category.")
 
     print(f"Current {app_type}\n{current_default}\n===================")
-    filtered = [app for app in matches if app["name"] != current_default]
+    filtered = [app for app in matches if app.name != current_default]
 
     for i, matched_app in enumerate(filtered, start=1):
-        print(f"{i}: {matched_app['name']}  {matched_app['desktop_id']}")
+        print(f"{i}: {matched_app.name}  {matched_app.desktop_id}")
 
     while True:
         user_answer = input("Choose app ")
@@ -31,7 +31,7 @@ def choose_apps(matches, current_default, app_type) -> tuple[str, str]:
         user_answer = int(user_answer)
         if user_answer in range(1, len(filtered) + 1):
             selected_app = filtered[user_answer - 1]
-            return selected_app["name"], selected_app["desktop_id"]
+            return selected_app.name, selected_app.desktop_id
         print(f"Type valid number between 1-{len(filtered)}")
 
 

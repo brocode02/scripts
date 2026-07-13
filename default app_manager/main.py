@@ -1,6 +1,6 @@
 import logging
 import sys
-
+from classes import App
 
 from cli import choose_apps, display, confirmation
 from scanner import scanner
@@ -21,14 +21,14 @@ MIME_CATEGORIES = MIME_CATEGORIES
 
 def main():
     applications = scanner()
-
+    apps = [App(a) for a in applications]
     ask_user, options = display(MIME_CATEGORIES)
     app_type = options[ask_user - 1]
     selected_category = MIME_CATEGORIES[app_type]
 
-    matches = supported_apps(applications, selected_category)
+    matches = supported_apps(apps, selected_category)
 
-    current_default = get_current_default(applications, selected_category)
+    current_default = get_current_default(apps, selected_category)
     name, desktop_id = choose_apps(matches, current_default, app_type)
 
     set_apps(desktop_id, selected_category)
