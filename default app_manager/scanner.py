@@ -13,7 +13,7 @@ def scanner():
         *(folder.rglob("*.desktop") for folder in directories)
     )
 
-    Application = []
+    applications = []
 
     for desktop_file in file_generator:
         config = configparser.ConfigParser(interpolation=None)
@@ -23,8 +23,19 @@ def scanner():
 
             if "Desktop Entry" not in config:
                 continue
-
             entry = config["Desktop Entry"]
+
+            def is_true(value):
+                return str(value).lower() == "true"
+
+            if is_true(
+                entry.get("Hidden") == "true"
+                or entry.get("NoDisplay") == "true"
+                or entry.get("Type", "Application") != "Application"
+                or not entry.get("Exec")
+            ):
+                continue
+
             app = {
                 "name": entry.get("Name", "Unknown"),
                 "exec_cmd": entry.get("Exec", ""),
@@ -33,8 +44,8 @@ def scanner():
                 "categories": entry.get("Categories", ""),
                 "desktop_id": desktop_file.name,
             }
-            Application.append(app)
+            applications.append(app)
 
         except Exception:
             continue
-    return Application
+    return applications

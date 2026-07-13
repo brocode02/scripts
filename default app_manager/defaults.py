@@ -1,27 +1,25 @@
 import subprocess
 
 
-def supported_apps(options, ask_user, Application, MIME_CATEGORIES):
+def supported_apps(applications, selected_category):
 
     matches = []
-    for app in Application:
+    for app in applications:
         mime_list = []
         for m in app["mime"].split(";"):
             if m:
                 mime_list.append(m)
-        if any(
-            MimeType in mime_list for MimeType in MIME_CATEGORIES[options[ask_user - 1]]
-        ):
+        if any(MimeType in mime_list for MimeType in selected_category):
             matches.append(app)
     return matches
 
 
-def set_apps(options, ask_user, name, desktop_id, MIME_CATEGORIES):
+def set_apps(name, desktop_id, selected_category):
     while True:
         confirm = input("Are you sure [y/n]: ")
 
         if confirm == "y":
-            for app_functions in MIME_CATEGORIES[options[ask_user - 1]]:
+            for app_functions in selected_category:
                 subprocess.run(
                     [
                         "xdg-mime",
@@ -30,7 +28,7 @@ def set_apps(options, ask_user, name, desktop_id, MIME_CATEGORIES):
                         app_functions,
                     ]
                 )
-            confirm_app(name, desktop_id, options, ask_user, MIME_CATEGORIES)
+            confirm_app(desktop_id, selected_category)
             break
         elif confirm == "n":
             break
@@ -38,9 +36,9 @@ def set_apps(options, ask_user, name, desktop_id, MIME_CATEGORIES):
             print("type a valid response")
 
 
-def confirm_app(name, desktop_id, options, ask_user, MIME_CATEGORIES):
+def confirm_app(desktop_id, selected_category):
     results = []
-    for app_functions in MIME_CATEGORIES[options[ask_user - 1]]:
+    for app_functions in selected_category:
         result_app = subprocess.run(
             [
                 "xdg-mime",
@@ -52,7 +50,4 @@ def confirm_app(name, desktop_id, options, ask_user, MIME_CATEGORIES):
             text=True,
         )
         results.append(result_app.stdout.strip() == desktop_id)
-    if all(results):
-        print(f"App sucessfully changed to {name} ")
-    else:
-        print(f"Some mime types were not changed to {name}")
+    return results

@@ -23,3 +23,10 @@ def choose_apps(matches) -> tuple[str, str]:
             desktop_id = selcted_app["desktop_id"]
             return name, desktop_id
         print(f"Type valid number between 1-{len(matches)}")
+
+
+def confirmation(results, name):
+    if all(results):
+        print(f"App sucessfully changed to {name} ")
+    else:
+        print(f"Some mime types were not changed to {name}")
