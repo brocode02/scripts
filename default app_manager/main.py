@@ -1,7 +1,12 @@
+import logging
+
+
 from cli import choose_apps, display, confirmation
 from scanner import scanner
 from defaults import confirm_app, supported_apps, set_apps
 from categories import MIME_CATEGORIES
+
+logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
 MIME_CATEGORIES = MIME_CATEGORIES
 

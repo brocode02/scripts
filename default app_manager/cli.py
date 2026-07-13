@@ -8,6 +8,9 @@ def display(MIME_CATEGORIES):
 
 
 def choose_apps(matches) -> tuple[str, str]:
+    if not matches:
+        raise ValueError("No apps found for the selected category.")
+
     for i, matched_app in enumerate(matches, start=1):
         print(f"{i}: {matched_app['name']}  {matched_app['desktop_id']}")
 
