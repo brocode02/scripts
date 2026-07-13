@@ -3,15 +3,24 @@ def display(MIME_CATEGORIES):
     for i, key in enumerate(MIME_CATEGORIES, start=1):
         print(f"{i}.  {key}")
         options.append(key)
-    ask_user = int(input("\nChoose: "))
-    return ask_user, options
+    while True:
+        ask_user = input("\nChoose: ")
+        if not ask_user.isdigit():
+            print(f"Type a no. between 1-{i}")
+        ask_user = int(ask_user)
+        if ask_user in range(1, i + 1):
+            return ask_user, options
+        print(f"Type a no between 1-{i}")
 
 
-def choose_apps(matches) -> tuple[str, str]:
+def choose_apps(matches, current_default, app_type) -> tuple[str, str]:
     if not matches:
         raise ValueError("No apps found for the selected category.")
 
-    for i, matched_app in enumerate(matches, start=1):
+    print(f"Current {app_type}\n{current_default}\n===================")
+    filtered = [app for app in matches if app["name"] != current_default]
+
+    for i, matched_app in enumerate(filtered, start=1):
         print(f"{i}: {matched_app['name']}  {matched_app['desktop_id']}")
 
     while True:
@@ -20,12 +29,10 @@ def choose_apps(matches) -> tuple[str, str]:
             print("Type a number")
             continue
         user_answer = int(user_answer)
-        if user_answer in range(1, len(matches) + 1):
-            selcted_app = matches[user_answer - 1]
-            name = selcted_app["name"]
-            desktop_id = selcted_app["desktop_id"]
-            return name, desktop_id
-        print(f"Type valid number between 1-{len(matches)}")
+        if user_answer in range(1, len(filtered) + 1):
+            selected_app = filtered[user_answer - 1]
+            return selected_app["name"], selected_app["desktop_id"]
+        print(f"Type valid number between 1-{len(filtered)}")
 
 
 def confirmation(results, name):
