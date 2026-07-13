@@ -6,7 +6,7 @@ def supported_apps(applications, selected_category):
     matches = []
     for app in applications:
         mime_list = []
-        for m in app["mime"].split(";"):
+        for m in app["mime"]:
             if m:
                 mime_list.append(m)
         if any(MimeType in mime_list for MimeType in selected_category):
@@ -14,7 +14,7 @@ def supported_apps(applications, selected_category):
     return matches
 
 
-def set_apps(name, desktop_id, selected_category):
+def set_apps(desktop_id, selected_category):
     while True:
         confirm = input("Are you sure [y/n]: ")
 

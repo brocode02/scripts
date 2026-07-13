@@ -16,7 +16,7 @@ matches = supported_apps(applications, selected_category)
 
 name, desktop_id = choose_apps(matches)
 
-set_apps(name, desktop_id, selected_category)
+set_apps(desktop_id, selected_category)
 results = confirm_app(desktop_id, selected_category)
 
 confirmation(results, name)

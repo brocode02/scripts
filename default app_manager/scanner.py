@@ -15,6 +15,9 @@ def scanner():
 
     applications = []
 
+    def is_true(value):
+        return str(value).lower() == "true"
+
     for desktop_file in file_generator:
         config = configparser.ConfigParser(interpolation=None)
 
@@ -25,12 +28,9 @@ def scanner():
                 continue
             entry = config["Desktop Entry"]
 
-            def is_true(value):
-                return str(value).lower() == "true"
-
             if is_true(
-                entry.get("Hidden") == "true"
-                or entry.get("NoDisplay") == "true"
+                entry.get("Hidden")
+                or entry.get("NoDisplay")
                 or entry.get("Type", "Application") != "Application"
                 or not entry.get("Exec")
             ):
@@ -40,12 +40,14 @@ def scanner():
                 "name": entry.get("Name", "Unknown"),
                 "exec_cmd": entry.get("Exec", ""),
                 "icon": entry.get("Icon", ""),
-                "mime": entry.get("MimeType", ""),
+                "mime": entry.get("MimeType", "").split(";"),
                 "categories": entry.get("Categories", ""),
                 "desktop_id": desktop_file.name,
+                "path": str(desktop_file),
             }
             applications.append(app)
 
         except Exception:
             continue
+    applications.sort(key=lambda app: app["name"])
     return applications
