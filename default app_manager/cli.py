@@ -1,4 +1,8 @@
 def display(MIME_CATEGORIES):
+    print(
+        "===========================\n Linux Default App Manager \n ============================\n"
+    )
+
     options = []
     for i, key in enumerate(MIME_CATEGORIES, start=1):
         print(f"{i}.  {key}")
@@ -21,7 +25,7 @@ def choose_apps(matches, current_default, app_type) -> tuple[str, str]:
     filtered = [app for app in matches if app.name != current_default]
 
     for i, matched_app in enumerate(filtered, start=1):
-        print(f"{i}: {matched_app.name}  {matched_app.desktop_id}")
+        print(f"{i}: {matched_app.name}")
 
     while True:
         user_answer = input("Choose app ")

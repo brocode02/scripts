@@ -1,5 +1,7 @@
 import logging
+import subprocess
 import sys
+import os
 from classes import App
 
 from cli import choose_apps, display, confirmation
@@ -19,9 +21,15 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 MIME_CATEGORIES = MIME_CATEGORIES
 
 
+def clear():
+    subprocess.run(["cls" if os.name == "nt" else "clear"], shell=True)
+
+
 def main():
     applications = scanner()
     apps = [App(a) for a in applications]
+    clear()
+
     ask_user, options = display(MIME_CATEGORIES)
     app_type = options[ask_user - 1]
     selected_category = MIME_CATEGORIES[app_type]
@@ -29,6 +37,7 @@ def main():
     matches = supported_apps(apps, selected_category)
 
     current_default = get_current_default(apps, selected_category)
+    clear()
     name, desktop_id = choose_apps(matches, current_default, app_type)
 
     set_apps(desktop_id, selected_category)
