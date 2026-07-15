@@ -45,7 +45,6 @@ def scanner():
 
             if (
                 is_true(entry.get("Hidden"))
-                or is_true(entry.get("NoDisplay"))
                 or entry.get("Type", "Application") != "Application"
                 or not entry.get("Exec")
             ):

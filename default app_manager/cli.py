@@ -39,8 +39,9 @@ def choose_apps(matches, current_default, app_type) -> tuple[str, str]:
         print(f"Type valid number between 1-{len(filtered)}")
 
 
-def confirmation(results, name):
-    if all(results):
-        print(f"App sucessfully changed to {name} ")
-    else:
-        print(f"Some mime types were not changed to {name}")
+def confirmation(output, name):
+    for key, value in output.items():
+        if value == "True":
+            print(f"{key} set to {name}")
+        else:
+            print(f"{key} was not set to {name}")

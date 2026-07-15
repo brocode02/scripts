@@ -42,9 +42,9 @@ def main():
 
     set_apps(desktop_id, selected_category)
     result_app = default_app(selected_category)
-    results = confirm_app(desktop_id, result_app)
+    output = confirm_app(desktop_id, result_app, selected_category)
 
-    confirmation(results, name)
+    confirmation(output, name)
 
 
 if __name__ == "__main__":

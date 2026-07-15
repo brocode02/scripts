@@ -69,5 +69,10 @@ def default_app(selected_category):
     return results
 
 
-def confirm_app(desktop_id, results):
-    return [result == desktop_id for result in results]
+def confirm_app(desktop_id, results, selected_category):
+    output = {}
+    for mime, result in zip(selected_category, results):
+        output[mime] = str(result == desktop_id)
+    return output
+
+    # return [result == desktop_id for result in results]
