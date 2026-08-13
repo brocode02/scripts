@@ -1,28 +1,27 @@
 import logging
+import os
 import subprocess
 import sys
-import os
-from classes import App
-
-from cli import choose_apps, display, confirmation
-from scanner import scanner
-from defaults import (
-    confirm_app,
-    get_current_default,
-    supported_apps,
-    set_apps,
-    default_app,
-)
 
 from categories import MIME_CATEGORIES
+from classes import App
+from cli import choose_apps, confirmation, display
+from defaults import (
+    confirm_app,
+    default_app,
+    get_current_default,
+    set_apps,
+    supported_apps,
+)
+from scanner import scanner
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
-MIME_CATEGORIES = MIME_CATEGORIES
+# MIME_CATEGORIES = MIME_CATEGORIES
 
 
 def clear():
-    subprocess.run(["cls" if os.name == "nt" else "clear"], shell=True)
+    subprocess.run(["cls" if os.name == "nt" else "clear"], shell=True, check=False)
 
 
 def main():

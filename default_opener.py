@@ -1,9 +1,9 @@
-from pathlib import Path
-import itertools
 import configparser
+import itertools
 import subprocess
-from categories import MIME_CATEGORIES
+from pathlib import Path
 
+from categories import MIME_CATEGORIES
 
 print(
     "===========================\n Linux Default App Manager \n ============================\n"

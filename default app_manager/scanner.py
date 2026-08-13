@@ -1,5 +1,5 @@
-import itertools
 import configparser
+import itertools
 import logging
 from pathlib import Path
 
@@ -24,7 +24,10 @@ def scanner():
         return str(value).lower() == "true"
 
     for desktop_file in file_generator:
-        config = configparser.ConfigParser(interpolation=None)
+        config = configparser.ConfigParser(
+            interpolation=None,
+            strict=False,
+        )
 
         try:
             read_files = config.read(desktop_file)

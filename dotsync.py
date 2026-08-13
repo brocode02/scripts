@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
+import subprocess
 import sys
 import threading
 import time
-import subprocess
-from watchdog.observers import Observer
+
 from watchdog.events import (
-    FileSystemEventHandler,
     FileSystemEvent,
+    FileSystemEventHandler,
 )
+from watchdog.observers import Observer
 
 changed = False
 
@@ -30,10 +31,11 @@ class MyeventHandler(FileSystemEventHandler):
                     "--exclude=*~",
                     "--exclude=*.swp",
                     "--exclude=*.swo",
-                    "/home/aman/.config/hypr/",
+                    "/home/aman/.config/caelestia/",
                     "/home/aman/dotfiles/hyprland/",
                 ],
                 capture_output=True,
+                check=False,
             )
         elif "/nvim/" in event.src_path:
             subprocess.run(
@@ -48,6 +50,7 @@ class MyeventHandler(FileSystemEventHandler):
                     "/home/aman/dotfiles/lazyvim",
                 ],
                 capture_output=True,
+                check=False,
             )
         changed = True
 
@@ -65,6 +68,7 @@ def git_sync():
             ["git", "add", "."],
             cwd="/home/aman/dotfiles/",
             capture_output=True,
+            check=False,
         )
 
         commit = subprocess.run(
@@ -72,6 +76,7 @@ def git_sync():
             cwd="/home/aman/dotfiles/",
             capture_output=True,
             text=True,
+            check=False,
         )
 
         if commit.returncode == 0:
@@ -81,10 +86,14 @@ def git_sync():
                 cwd="/home/aman/dotfiles/",
                 capture_output=True,
                 text=True,
+                check=False,
             )
             if result.returncode == 0:
                 log("Push succeeded")
-                subprocess.run(["notify-send", "Dotfiles", "Synced Sucessfully"])
+                subprocess.run(
+                    ["notify-send", "Dotfiles", "Synced Sucessfully"], check=False
+                )
+
                 changed = False
             else:
                 err = result.stderr.strip()[:200]
@@ -97,6 +106,7 @@ def git_sync():
                         "Dotfiles",
                         f"Push failed: {err}",
                     ],
+                    check=False,
                 )
         else:
             err = commit.stderr.strip() if commit.stderr else ""
@@ -107,6 +117,7 @@ def git_sync():
                 cwd="/home/aman/dotfiles/",
                 capture_output=True,
                 text=True,
+                check=False,
             )
             if status.stdout.strip() == "":
                 changed = False

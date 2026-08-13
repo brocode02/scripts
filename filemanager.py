@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 
+
+import logging
 import os
 import pathlib
-import subprocess
 import shutil
-import logging
+import subprocess
 
 logging.basicConfig()
 
@@ -46,6 +47,7 @@ def unzip_files():
     subprocess.run(
         f"7z x '{path_to_put}' '-o{parts[2]}'",
         shell=True,
+        check=False,
     )
 
 
@@ -116,7 +118,6 @@ def copy_files():
 
 def current_directory():
     print(os.getcwd())
-    return
 
 
 def ls():
@@ -205,6 +206,7 @@ def delete_files():
             os.remove(path_to_put)
         except FileNotFoundError:
             print("File not found")
+            
         except PermissionError:
             print("Permission denied")
         except IsADirectoryError:
