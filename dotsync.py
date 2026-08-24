@@ -85,14 +85,14 @@ def git_sync():
 
         subprocess.run(
             ["git", "add", "."],
-            cwd="/home/aman/dotfiles/",
+            cwd="/home/aman/dotfiles/nvchad/",
             capture_output=True,
             check=False,
         )
 
         commit = subprocess.run(
             ["git", "commit", "-m", "auto backup"],
-            cwd="/home/aman/dotfiles/",
+            cwd="/home/aman/dotfiles/nvchad/",
             capture_output=True,
             text=True,
             check=False,
@@ -102,7 +102,7 @@ def git_sync():
             log(f"Committed: {commit.stdout.strip()}")
             result = subprocess.run(
                 ["git", "push"],
-                cwd="/home/aman/dotfiles/",
+                cwd="/home/aman/dotfiles/nvchad/",
                 capture_output=True,
                 text=True,
                 check=False,
@@ -133,7 +133,7 @@ def git_sync():
 
             status = subprocess.run(
                 ["git", "status", "--porcelain"],
-                cwd="/home/aman/dotfiles/",
+                cwd="/home/aman/dotfiles/nvchad/",
                 capture_output=True,
                 text=True,
                 check=False,
