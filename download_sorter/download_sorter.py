@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 
+import logging
 import os
+import shutil
+import signal
 import sys
 import time
-import signal
-import shutil
-import logging
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from file_types import FILE_TYPES
-
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 

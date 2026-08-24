@@ -12,6 +12,7 @@ from watchdog.events import (
 from watchdog.observers import Observer
 
 changed = False
+changed_caelestia = False
 
 
 def log(msg):
@@ -22,21 +23,24 @@ class MyeventHandler(FileSystemEventHandler):
     def on_any_event(self, event: FileSystemEvent) -> None:
         if event.event_type in ("opened", "closed_no_write", "closed"):
             return
-        global changed
-        if "/hypr/" in event.src_path:
-            subprocess.run(
-                [
-                    "rsync",
-                    "-a",
-                    "--exclude=*~",
-                    "--exclude=*.swp",
-                    "--exclude=*.swo",
-                    "/home/aman/.config/caelestia/",
-                    "/home/aman/dotfiles/hyprland/",
-                ],
-                capture_output=True,
-                check=False,
-            )
+        global changed, changed_caelestia
+        if "/caelestia/" in event.src_path:
+            changed_caelestia = True
+            return
+            # subprocess.run(
+            #     [
+            # "rsync",
+            # "-a",
+            # "--exclude-.git",
+            # "--exclude=*~",
+            # "--exclude=*.swp",
+            # "--exclude=*.swo",
+            # "/home/aman/.config/caelestia/",
+            # "/home/aman/dotfiles/hyprland/",
+            #     ],
+            #     capture_output=True,
+            #     check=False,
+            # )
         elif "/nvim/" in event.src_path:
             subprocess.run(
                 [
@@ -48,6 +52,21 @@ class MyeventHandler(FileSystemEventHandler):
                     "--exclude=*.swo",
                     "/home/aman/.config/nvim/",
                     "/home/aman/dotfiles/lazyvim",
+                ],
+                capture_output=True,
+                check=False,
+            )
+        elif "/nvchad/lua" in event.src_path:
+            subprocess.run(
+                [
+                    "rsync",
+                    "-a",
+                    "--exclude=.git",
+                    "--exclude=*~",
+                    "--exclude=*.swp",
+                    "--exclude=*.swo",
+                    "/home/aman/.config/nvchad/lua/",
+                    "/home/aman/dotfiles/nvchad/lua/",
                 ],
                 capture_output=True,
                 check=False,
@@ -123,15 +142,85 @@ def git_sync():
                 changed = False
 
 
+def git_sync_caelestia():
+    global changed_caelestia
+    while True:
+        time.sleep(60)
+        if not changed_caelestia:
+            continue
+
+        log("Syncing caelestia...")
+
+        subprocess.run(
+            ["git", "add", "."],
+            cwd="/home/aman/.config/caelestia/",
+            capture_output=True,
+            check=False,
+        )
+
+        commit = subprocess.run(
+            ["git", "commit", "-m", "auto backup"],
+            cwd="/home/aman/.config/caelestia/",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if commit.returncode == 0:
+            log(f"Committed (caelestia): {commit.stdout.strip()}")
+            result = subprocess.run(
+                ["git", "push"],
+                cwd="/home/aman/.config/caelestia/",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                log("Push succeeded (caelestia)")
+                subprocess.run(
+                    ["notify-send", "Caelestia", "Synced Successfully"], check=False
+                )
+                changed_caelestia = False
+            else:
+                err = result.stderr.strip()[:200]
+                log(f"Push failed (caelestia): {err}")
+                subprocess.run(
+                    [
+                        "notify-send",
+                        "-u",
+                        "critical",
+                        "Caelestia",
+                        f"Push failed: {err}",
+                    ],
+                    check=False,
+                )
+        else:
+            err = commit.stderr.strip() if commit.stderr else ""
+            log(f"Commit (caelestia): {err}")
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd="/home/aman/.config/caelestia/",
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if status.stdout.strip() == "":
+                changed_caelestia = False
+
+
 event_handler = MyeventHandler()
 observer = Observer()
 
-observer.schedule(event_handler, "/home/aman/.config/hypr/", recursive=True)
-observer.schedule(event_handler, "/home/aman/.config/nvim/", recursive=True)
+# observer.schedule(event_handler, "/home/aman/.config/hypr/", recursive=True)
+# observer.schedule(event_handler, "/home/aman/.config/nvim/", recursive=True)
+observer.schedule(event_handler, "/home/aman/.config/caelestia/", recursive=True)
+observer.schedule(event_handler, "/home/aman/.config/nvchad/lua/", recursive=True)
+
 
 log("Starting dotfile sync observer")
 observer.start()
 threading.Thread(target=git_sync, daemon=True).start()
+threading.Thread(target=git_sync_caelestia, daemon=True).start()
 
 try:
     while True:

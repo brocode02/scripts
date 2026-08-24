@@ -206,7 +206,7 @@ def delete_files():
             os.remove(path_to_put)
         except FileNotFoundError:
             print("File not found")
-            
+
         except PermissionError:
             print("Permission denied")
         except IsADirectoryError:

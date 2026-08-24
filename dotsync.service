@@ -1,0 +1,12 @@
+[Unit]
+Description=Dotsync
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/aman/scripts/dotsync.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
